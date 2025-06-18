@@ -97,4 +97,4 @@ def update_parking_spot(spot_id):
 
 # ---------- Ejecución ----------
 if __name__ == '__main__':
-   
+    pass  # Para compatibilidad, aunque Render no lo usa
