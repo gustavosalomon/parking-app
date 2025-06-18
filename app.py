@@ -25,7 +25,10 @@ def ensure_files():
                 "status": "vacío",
                 "start_time": None,
                 "end_time": None,
-                "user": None
+                "user": None,
+                "patente": None,
+                "vehiculo": None,
+                "phone": None
             })
         with open(DATA_FILE, 'w', encoding='utf-8') as f:
             json.dump(spots, f, indent=2)
@@ -114,12 +117,74 @@ def api_update_spot(spot_id):
                         break
 
                 spot['user'] = None
+                spot['patente'] = None
+                spot['vehiculo'] = None
+                spot['phone'] = None
 
             save_spots(spots)
             save_history(history)
             return jsonify(spot)
 
     return jsonify({"error": "Spot no encontrado"}), 404
+
+# --- API: registrar usuario y ocupar un spot ---
+@app.route('/api/register-user', methods=['POST'])
+def api_register_user():
+    data = request.form
+
+    try:
+        spot_id = int(data.get("spot_id"))
+        nombre = data.get("nombre")
+        apellido = data.get("apellido")
+        patente = data.get("patente")
+        vehiculo = data.get("vehiculo")
+        phone = data.get("phone")
+
+        if not all([nombre, apellido, patente, vehiculo, phone]):
+            return jsonify({"error": "Faltan datos del usuario"}), 400
+
+        spots = load_spots()
+        history = load_history()
+
+        # Verificar si el lugar existe
+        if spot_id < 0 or spot_id >= len(spots):
+            return jsonify({"error": "ID de lugar inválido"}), 400
+
+        spot = spots[spot_id]
+
+        # Verificar si ya está ocupado
+        if spot['status'] == 'ocupado':
+            return jsonify({"error": "El lugar ya está ocupado"}), 400
+
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # Ocupar el lugar
+        spot['status'] = 'ocupado'
+        spot['start_time'] = now
+        spot['end_time'] = None
+        spot['user'] = f"{nombre} {apellido}"
+        spot['patente'] = patente
+        spot['vehiculo'] = vehiculo
+        spot['phone'] = phone
+
+        # Guardar historial
+        history.append({
+            "id": spot_id,
+            "user": spot['user'],
+            "patente": patente,
+            "vehiculo": vehiculo,
+            "phone": phone,
+            "start_time": now,
+            "end_time": None
+        })
+
+        save_spots(spots)
+        save_history(history)
+
+        return jsonify({"success": True, "message": "Usuario registrado y lugar ocupado con éxito"})
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 # --- API: obtener historial completo ---
 @app.route('/api/parking-history', methods=['GET'])
