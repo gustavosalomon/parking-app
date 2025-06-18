@@ -12,7 +12,6 @@ CORS(app)
 DATA_FILE = 'data/parking_spots.json'
 HISTORY_FILE = 'data/parking_history.json'
 
-# --- Asegurar carpetas y archivos ---
 def ensure_files():
     os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
     if not os.path.exists(DATA_FILE):
@@ -25,10 +24,7 @@ def ensure_files():
                 "status": "vacío",
                 "start_time": None,
                 "end_time": None,
-                "user": None,
-                "patente": None,
-                "vehiculo": None,
-                "phone": None
+                "user": None
             })
         with open(DATA_FILE, 'w', encoding='utf-8') as f:
             json.dump(spots, f, indent=2)
@@ -47,21 +43,18 @@ def save_json(file, data):
     with open(file, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=2)
 
-# --- Cargar spots ---
 def load_spots():
     return load_json(DATA_FILE)
 
 def save_spots(spots):
     save_json(DATA_FILE, spots)
 
-# --- Cargar historial ---
 def load_history():
     return load_json(HISTORY_FILE)
 
 def save_history(history):
     save_json(HISTORY_FILE, history)
 
-# --- API: obtener spots con geometría rotada (igual que front) ---
 def add_rotated(spots, width=4, height=2.6, angle=147.5):
     for spot in spots:
         spot['rotated'] = {
@@ -77,12 +70,12 @@ def api_get_spots():
     spots = add_rotated(spots)
     return jsonify(spots)
 
-# --- API: actualizar estado de un spot ---
 @app.route('/api/parking-spots/<int:spot_id>', methods=['PUT'])
 def api_update_spot(spot_id):
     data = request.get_json()
     new_status = data.get('status')
-    user = data.get('user', None)
+    user_obj = data.get('user', None)  # Esperamos un objeto con datos completos
+
     if new_status not in ['vacío', 'ocupado']:
         return jsonify({"error": "Estado inválido"}), 400
 
@@ -96,9 +89,10 @@ def api_update_spot(spot_id):
                 spot['status'] = 'ocupado'
                 spot['start_time'] = now
                 spot['end_time'] = None
-                spot['user'] = user or f"usuario_{spot_id}"
+                # Guardamos el objeto completo
+                spot['user'] = user_obj or {}
 
-                # Agregar al historial inicio
+                # Agregar al historial inicio con user completo
                 history.append({
                     "id": spot_id,
                     "user": spot['user'],
@@ -117,9 +111,6 @@ def api_update_spot(spot_id):
                         break
 
                 spot['user'] = None
-                spot['patente'] = None
-                spot['vehiculo'] = None
-                spot['phone'] = None
 
             save_spots(spots)
             save_history(history)
@@ -127,72 +118,11 @@ def api_update_spot(spot_id):
 
     return jsonify({"error": "Spot no encontrado"}), 404
 
-# --- API: registrar usuario y ocupar un spot ---
-@app.route('/api/register-user', methods=['POST'])
-def api_register_user():
-    data = request.form
-
-    try:
-        spot_id = int(data.get("spot_id"))
-        nombre = data.get("nombre")
-        apellido = data.get("apellido")
-        patente = data.get("patente")
-        vehiculo = data.get("vehiculo")
-        phone = data.get("phone")
-
-        if not all([nombre, apellido, patente, vehiculo, phone]):
-            return jsonify({"error": "Faltan datos del usuario"}), 400
-
-        spots = load_spots()
-        history = load_history()
-
-        # Verificar si el lugar existe
-        if spot_id < 0 or spot_id >= len(spots):
-            return jsonify({"error": "ID de lugar inválido"}), 400
-
-        spot = spots[spot_id]
-
-        # Verificar si ya está ocupado
-        if spot['status'] == 'ocupado':
-            return jsonify({"error": "El lugar ya está ocupado"}), 400
-
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-        # Ocupar el lugar
-        spot['status'] = 'ocupado'
-        spot['start_time'] = now
-        spot['end_time'] = None
-        spot['user'] = f"{nombre} {apellido}"
-        spot['patente'] = patente
-        spot['vehiculo'] = vehiculo
-        spot['phone'] = phone
-
-        # Guardar historial
-        history.append({
-            "id": spot_id,
-            "user": spot['user'],
-            "patente": patente,
-            "vehiculo": vehiculo,
-            "phone": phone,
-            "start_time": now,
-            "end_time": None
-        })
-
-        save_spots(spots)
-        save_history(history)
-
-        return jsonify({"success": True, "message": "Usuario registrado y lugar ocupado con éxito"})
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-# --- API: obtener historial completo ---
 @app.route('/api/parking-history', methods=['GET'])
 def api_get_history():
     history = load_history()
     return jsonify(history)
 
-# --- API: estadísticas de ocupación diaria ---
 @app.route('/api/parking-stats/daily', methods=['GET'])
 def api_daily_stats():
     history = load_history()
@@ -203,7 +133,6 @@ def api_daily_stats():
             stats[start_date] = stats.get(start_date, 0) + 1
     return jsonify(stats)
 
-# --- API: exportar Excel ---
 @app.route('/api/export-excel', methods=['GET'])
 def api_export_excel():
     history = load_history()
