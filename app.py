@@ -1,100 +1,153 @@
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_file
 from flask_cors import CORS
 import json
 import os
 from datetime import datetime
+import io
+import pandas as pd
 
 app = Flask(__name__)
 CORS(app)
 
 DATA_FILE = 'data/parking_spots.json'
+HISTORY_FILE = 'data/parking_history.json'
 
-# ---------- Asegurar existencia de carpeta y archivo ----------
-def ensure_data_file():
+# --- Asegurar carpetas y archivos ---
+def ensure_files():
     os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
     if not os.path.exists(DATA_FILE):
-        default_data = []
+        spots = []
         for i in range(16):
-            default_data.append({
+            spots.append({
                 "id": i,
-                "lat": -26.0814 + (i * 0.000021),  # ajustable
-                "lon": -58.275488 + (i * 0.000013),  # ajustable
+                "lat": -26.0814 + (i * 0.000021),
+                "lon": -58.275488 + (i * 0.000013),
                 "status": "vacío",
                 "start_time": None,
                 "end_time": None,
                 "user": None
             })
         with open(DATA_FILE, 'w', encoding='utf-8') as f:
-            json.dump(default_data, f, ensure_ascii=False, indent=2)
+            json.dump(spots, f, indent=2)
 
-# ---------- Utilidades para archivo JSON ----------
-def load_parking_spots():
-    with open(DATA_FILE, 'r', encoding='utf-8') as f:
+    if not os.path.exists(HISTORY_FILE):
+        with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
+            json.dump([], f, indent=2)
+
+ensure_files()
+
+def load_json(file):
+    with open(file, 'r', encoding='utf-8') as f:
         return json.load(f)
 
-def save_parking_spots(spots):
-    with open(DATA_FILE, 'w', encoding='utf-8') as f:
-        json.dump(spots, f, ensure_ascii=False, indent=2)
+def save_json(file, data):
+    with open(file, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=2)
 
-# ---------- Añadir geometría rectangular simple ----------
-def add_rectangles_to_spots(spots, offset_lat=0.000008, offset_lon=0.000010):
+# --- Cargar spots ---
+def load_spots():
+    return load_json(DATA_FILE)
+
+def save_spots(spots):
+    save_json(DATA_FILE, spots)
+
+# --- Cargar historial ---
+def load_history():
+    return load_json(HISTORY_FILE)
+
+def save_history(history):
+    save_json(HISTORY_FILE, history)
+
+# --- API: obtener spots con geometría rotada (igual que front) ---
+def add_rotated(spots, width=4, height=2.6, angle=147.5):
     for spot in spots:
-        spot["rect"] = {
-            "north": spot["lat"] + offset_lat,
-            "south": spot["lat"] - offset_lat,
-            "east":  spot["lon"] + offset_lon,
-            "west":  spot["lon"] - offset_lon
+        spot['rotated'] = {
+            'width': width,
+            'height': height,
+            'angle': angle
         }
     return spots
 
-# ---------- Añadir geometría rotada ----------
-def add_rotated_rectangles_to_spots(spots, width=4, height=2.6, angle=147.5):
-    for spot in spots:
-        spot["rotated"] = {
-            "width": width,
-            "height": height,
-            "angle": angle
-        }
-    return spots
-
-# ---------- Inicialización ----------
-ensure_data_file()
-parking_spots = load_parking_spots()
-
-# ---------- API: obtener todos los espacios ----------
 @app.route('/api/parking-spots', methods=['GET'])
-def get_parking_spots():
-    enriched = add_rectangles_to_spots(parking_spots.copy())
-    enriched = add_rotated_rectangles_to_spots(enriched)
-    return jsonify(enriched)
+def api_get_spots():
+    spots = load_spots()
+    spots = add_rotated(spots)
+    return jsonify(spots)
 
-# ---------- API: actualizar un espacio ----------
+# --- API: actualizar estado de un spot ---
 @app.route('/api/parking-spots/<int:spot_id>', methods=['PUT'])
-def update_parking_spot(spot_id):
+def api_update_spot(spot_id):
     data = request.get_json()
     new_status = data.get('status')
-    user = data.get('user', None)  # opcional
-
+    user = data.get('user', None)
     if new_status not in ['vacío', 'ocupado']:
-        return jsonify({'error': 'Estado inválido'}), 400
+        return jsonify({"error": "Estado inválido"}), 400
 
-    current_time = datetime.now().strftime('%H:%M')
+    spots = load_spots()
+    history = load_history()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    for spot in parking_spots:
+    for spot in spots:
         if spot['id'] == spot_id:
-            if new_status == 'ocupado':
+            if new_status == 'ocupado' and spot['status'] != 'ocupado':
                 spot['status'] = 'ocupado'
-                spot['start_time'] = current_time
+                spot['start_time'] = now
                 spot['end_time'] = None
                 spot['user'] = user or f"usuario_{spot_id}"
-            elif new_status == 'vacío':
+
+                # Agregar al historial inicio
+                history.append({
+                    "id": spot_id,
+                    "user": spot['user'],
+                    "start_time": now,
+                    "end_time": None
+                })
+
+            elif new_status == 'vacío' and spot['status'] != 'vacío':
                 spot['status'] = 'vacío'
-                spot['end_time'] = current_time
-            save_parking_spots(parking_spots)
+                spot['end_time'] = now
+
+                # Actualizar historial último registro abierto
+                for record in reversed(history):
+                    if record['id'] == spot_id and record['end_time'] is None:
+                        record['end_time'] = now
+                        break
+
+                spot['user'] = None
+
+            save_spots(spots)
+            save_history(history)
             return jsonify(spot)
 
-    return jsonify({'error': 'ID no encontrado'}), 404
+    return jsonify({"error": "Spot no encontrado"}), 404
 
-# ---------- Ejecución ----------
+# --- API: obtener historial completo ---
+@app.route('/api/parking-history', methods=['GET'])
+def api_get_history():
+    history = load_history()
+    return jsonify(history)
+
+# --- API: estadísticas de ocupación diaria ---
+@app.route('/api/parking-stats/daily', methods=['GET'])
+def api_daily_stats():
+    history = load_history()
+    stats = {}
+    for record in history:
+        start_date = record['start_time'][:10] if record['start_time'] else None
+        if start_date:
+            stats[start_date] = stats.get(start_date, 0) + 1
+    return jsonify(stats)
+
+# --- API: exportar Excel ---
+@app.route('/api/export-excel', methods=['GET'])
+def api_export_excel():
+    history = load_history()
+    df = pd.DataFrame(history)
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False, sheet_name='Historial')
+    output.seek(0)
+    return send_file(output, attachment_filename="parking_history.xlsx", as_attachment=True)
+
 if __name__ == '__main__':
-    pass  # Para compatibilidad, aunque Render no lo usa
+    app.run(debug=True)
