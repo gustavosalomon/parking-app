@@ -3,6 +3,7 @@ from flask_cors import CORS
 import json
 import os
 from datetime import datetime
+from collections import defaultdict
 
 app = Flask(__name__)
 CORS(app)
@@ -178,14 +179,21 @@ def update_spot(spot_id):
 
 @app.route('/api/estadisticas', methods=['GET'])
 def obtener_estadisticas():
+    if not os.path.exists(HISTORY_FILE):
+        return jsonify({
+            "por_dia": {}, "por_hora": {},
+            "por_mes": {}, "por_año": {},
+            "por_tipo_vehiculo": {}
+        })
+
     with open(HISTORY_FILE, 'r') as f:
         registros = json.load(f)
 
-    por_dia = {}
-    por_hora = {}
-    por_mes = {}
-    por_año = {}
-    por_tipo_vehiculo = {}
+    por_dia = defaultdict(int)
+    por_hora = defaultdict(int)
+    por_mes = defaultdict(int)
+    por_año = defaultdict(int)
+    por_tipo_vehiculo = defaultdict(int)
 
     for r in registros:
         if r.get("start_time") and r.get("user"):
@@ -194,13 +202,13 @@ def obtener_estadisticas():
             hora = fecha.strftime("%H")
             mes = fecha.strftime("%Y-%m")
             año = fecha.strftime("%Y")
-            tipo = r["user"].get("tipo_vehiculo", "desconocido")
+            tipo = r["user"].get("tipo_vehiculo", "Desconocido")
 
-            por_dia[dia] = por_dia.get(dia, 0) + 1
-            por_hora[hora] = por_hora.get(hora, 0) + 1
-            por_mes[mes] = por_mes.get(mes, 0) + 1
-            por_año[año] = por_año.get(año, 0) + 1
-            por_tipo_vehiculo[tipo] = por_tipo_vehiculo.get(tipo, 0) + 1
+            por_dia[dia] += 1
+            por_hora[hora] += 1
+            por_mes[mes] += 1
+            por_año[año] += 1
+            por_tipo_vehiculo[tipo] += 1
 
     return jsonify({
         "por_dia": por_dia,
