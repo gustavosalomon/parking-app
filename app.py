@@ -176,6 +176,41 @@ def update_spot(spot_id):
 
     return jsonify({"error": "Spot no encontrado"}), 404
 
+@app.route('/api/estadisticas', methods=['GET'])
+def obtener_estadisticas():
+    with open(HISTORY_FILE, 'r') as f:
+        registros = json.load(f)
+
+    por_dia = {}
+    por_hora = {}
+    por_mes = {}
+    por_año = {}
+    por_tipo_vehiculo = {}
+
+    for r in registros:
+        if r.get("start_time") and r.get("user"):
+            fecha = datetime.fromisoformat(r["start_time"])
+            dia = fecha.strftime("%Y-%m-%d")
+            hora = fecha.strftime("%H")
+            mes = fecha.strftime("%Y-%m")
+            año = fecha.strftime("%Y")
+            tipo = r["user"].get("tipo_vehiculo", "desconocido")
+
+            por_dia[dia] = por_dia.get(dia, 0) + 1
+            por_hora[hora] = por_hora.get(hora, 0) + 1
+            por_mes[mes] = por_mes.get(mes, 0) + 1
+            por_año[año] = por_año.get(año, 0) + 1
+            por_tipo_vehiculo[tipo] = por_tipo_vehiculo.get(tipo, 0) + 1
+
+    return jsonify({
+        "por_dia": por_dia,
+        "por_hora": por_hora,
+        "por_mes": por_mes,
+        "por_año": por_año,
+        "por_tipo_vehiculo": por_tipo_vehiculo
+    })
+
+
 
 if __name__ == '__main__':
     app.run(debug=True)
