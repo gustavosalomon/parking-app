@@ -181,9 +181,10 @@ def update_spot(spot_id):
 def obtener_estadisticas():
     if not os.path.exists(HISTORY_FILE):
         return jsonify({
-            "por_dia": {}, "por_hora": {},
-            "por_mes": {}, "por_año": {},
-            "por_tipo_vehiculo": {}
+            "por_dia": {}, "por_hora": {}, "por_mes": {}, "por_año": {},
+            "por_tipo_vehiculo": {}, "por_estacionamiento": {},
+            "por_tipo_dia": {}, "por_franja_horaria": {},
+            "total_registros": 0, "usuarios_unicos": 0
         })
 
     with open(HISTORY_FILE, 'r') as f:
@@ -194,30 +195,68 @@ def obtener_estadisticas():
     por_mes = defaultdict(int)
     por_año = defaultdict(int)
     por_tipo_vehiculo = defaultdict(int)
+    por_estacionamiento = defaultdict(int)
+    por_tipo_dia = defaultdict(int)
+    por_franja_horaria = defaultdict(int)
+    usuarios_unicos = set()
 
     for r in registros:
-        if r.get("start_time") and r.get("user"):
-            fecha = datetime.fromisoformat(r["start_time"])
-            dia = fecha.strftime("%Y-%m-%d")
-            hora = fecha.strftime("%H")
-            mes = fecha.strftime("%Y-%m")
-            año = fecha.strftime("%Y")
-            tipo = r["user"].get("tipo_vehiculo", "Desconocido")
+        start_time = r.get("start_time")
+        user = r.get("user")
 
-            por_dia[dia] += 1
-            por_hora[hora] += 1
-            por_mes[mes] += 1
-            por_año[año] += 1
-            por_tipo_vehiculo[tipo] += 1
+        if not start_time or not user:
+            continue
+
+        try:
+            fecha = datetime.fromisoformat(start_time)
+        except Exception:
+            continue
+
+        dia = fecha.strftime("%Y-%m-%d")
+        hora = fecha.strftime("%H")
+        mes = fecha.strftime("%Y-%m")
+        año = fecha.strftime("%Y")
+
+        tipo_vehiculo = user.get("tipo_vehiculo", "Desconocido")
+        spot_id = str(r.get("parking_id", "N/A"))
+        dni = user.get("dni")
+
+        por_dia[dia] += 1
+        por_hora[hora] += 1
+        por_mes[mes] += 1
+        por_año[año] += 1
+        por_tipo_vehiculo[tipo_vehiculo] += 1
+        por_estacionamiento[spot_id] += 1
+
+        if dni:
+            usuarios_unicos.add(dni)
+
+        tipo_dia = "fin_de_semana" if fecha.weekday() >= 5 else "laboral"
+        por_tipo_dia[tipo_dia] += 1
+
+        h = int(hora)
+        if h < 6:
+            franja = "madrugada"
+        elif h < 12:
+            franja = "mañana"
+        elif h < 18:
+            franja = "tarde"
+        else:
+            franja = "noche"
+        por_franja_horaria[franja] += 1
 
     return jsonify({
         "por_dia": por_dia,
         "por_hora": por_hora,
         "por_mes": por_mes,
         "por_año": por_año,
-        "por_tipo_vehiculo": por_tipo_vehiculo
+        "por_tipo_vehiculo": por_tipo_vehiculo,
+        "por_estacionamiento": por_estacionamiento,
+        "por_tipo_dia": por_tipo_dia,
+        "por_franja_horaria": por_franja_horaria,
+        "total_registros": len(registros),
+        "usuarios_unicos": len(usuarios_unicos)
     })
-
 
 
 if __name__ == '__main__':
