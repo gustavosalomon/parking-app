@@ -1,59 +1,23 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
-import json
-import os
+from pymongo import MongoClient
 from datetime import datetime
 from collections import defaultdict
 
 app = Flask(__name__)
 CORS(app)
 
-DATA_DIR = 'data'
-SPOTS_FILE = os.path.join(DATA_DIR, 'parking_spots.json')
-HISTORY_FILE = os.path.join(DATA_DIR, 'parking_history.json')
-USERS_FILE = os.path.join(DATA_DIR, 'users.json')
+# Conexion a MongoDB Atlas
+MONGO_URI = "mongodb+srv://admin:admin123@cluster0.mongodb.net/?retryWrites=true&w=majority"
+client = MongoClient(MONGO_URI)
+db = client['smart_parking']
 
-def ensure_files():
-    os.makedirs(DATA_DIR, exist_ok=True)
+spots_collection = db['parking_spots']
+estadisticas_collection = db['estadisticas']
+users_collection = db['users']
 
-    if not os.path.exists(SPOTS_FILE):
-        spots = []
-        for i in range(16):
-            spots.append({
-                "id": i,
-                "lat": -26.0814 + (i * 0.000021),
-                "lon": -58.275488 + (i * 0.000013),
-                "status": "vacío",
-                "start_time": None,
-                "end_time": None,
-                "user": None
-            })
-        with open(SPOTS_FILE, 'w', encoding='utf-8') as f:
-            json.dump(spots, f, indent=2)
-
-    if not os.path.exists(HISTORY_FILE):
-        with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
-            json.dump([], f, indent=2)
-
-    if not os.path.exists(USERS_FILE):
-        with open(USERS_FILE, 'w', encoding='utf-8') as f:
-            json.dump([], f, indent=2)
-
-ensure_files()
-
-def load_json(path):
-    with open(path, 'r', encoding='utf-8') as f:
-        return json.load(f)
-
-def save_json(path, data):
-    with open(path, 'w', encoding='utf-8') as f:
-        json.dump(data, f, indent=2)
-
-def find_user_by_dni(users, dni):
-    for u in users:
-        if u['dni'] == dni:
-            return u
-    return None
+def find_user_by_dni(dni):
+    return users_collection.find_one({"dni": dni}, {"_id": 0})
 
 def add_rotated(spots, width=4, height=2.6, angle=147.5):
     for spot in spots:
@@ -67,26 +31,23 @@ def add_rotated(spots, width=4, height=2.6, angle=147.5):
 @app.route('/api/parking-spots', methods=['GET', 'POST'])
 def spots_and_users():
     if request.method == 'GET':
-        spots = load_json(SPOTS_FILE)
+        spots = list(spots_collection.find({}, {"_id": 0}))
         spots = add_rotated(spots)
         return jsonify(spots)
 
-    # POST: login or register
     data = request.get_json()
     if not data or 'action' not in data:
         return jsonify({"error": "Falta 'action' en la solicitud"}), 400
 
     action = data['action']
-    users = load_json(USERS_FILE)
 
     if action == 'register':
-        # Campos requeridos
         required = ['nombre', 'apellido', 'dni', 'tipo_vehiculo', 'celular', 'password']
         for field in required:
             if field not in data or not data[field]:
                 return jsonify({"error": f"Falta campo obligatorio: {field}"}), 400
 
-        if find_user_by_dni(users, data['dni']):
+        if find_user_by_dni(data['dni']):
             return jsonify({"error": "Usuario ya registrado con ese DNI"}), 400
 
         new_user = {
@@ -95,10 +56,9 @@ def spots_and_users():
             "dni": data['dni'],
             "tipo_vehiculo": data['tipo_vehiculo'],
             "celular": data['celular'],
-            "password": data['password']  # Nota: en producción, encriptar la contraseña
+            "password": data['password']
         }
-        users.append(new_user)
-        save_json(USERS_FILE, users)
+        users_collection.insert_one(new_user)
         return jsonify({"message": "Registro exitoso"}), 201
 
     elif action == 'login':
@@ -107,18 +67,15 @@ def spots_and_users():
         if not dni or not password:
             return jsonify({"error": "DNI y contraseña son obligatorios"}), 400
 
-        user = find_user_by_dni(users, dni)
+        user = find_user_by_dni(dni)
         if not user or user.get('password') != password:
             return jsonify({"error": "DNI o contraseña incorrectos"}), 401
 
-        # Login exitoso, devolvemos datos sin password
-        user_safe = user.copy()
-        user_safe.pop('password', None)
-        return jsonify({"message": "Login exitoso", "user": user_safe})
+        user.pop('password', None)
+        return jsonify({"message": "Login exitoso", "user": user})
 
     else:
         return jsonify({"error": "Acción no soportada"}), 400
-
 
 @app.route('/api/parking-spots/<int:spot_id>', methods=['PUT'])
 def update_spot(spot_id):
@@ -127,137 +84,44 @@ def update_spot(spot_id):
         return jsonify({"error": "Falta 'status' en la solicitud"}), 400
 
     new_status = data['status']
-    user_obj = data.get('user', None)  # objeto con datos usuario completo o None
+    user_obj = data.get('user', None)
 
     if new_status not in ['vacío', 'ocupado']:
         return jsonify({"error": "Estado inválido"}), 400
 
-    spots = load_json(SPOTS_FILE)
-    history = load_json(HISTORY_FILE)
+    spot = spots_collection.find_one({"id": spot_id}, {"_id": 0})
+    if not spot:
+        return jsonify({"error": "Spot no encontrado"}), 404
+
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    # Para permitir solo un spot ocupado por usuario, verificamos si user ya tiene spot ocupado
-    if new_status == 'ocupado' and user_obj:
-        user_dni = user_obj.get('dni')
-        if user_dni:
-            for spot in spots:
-                if spot['status'] == 'ocupado' and spot['user'] and spot['user'].get('dni') == user_dni and spot['id'] != spot_id:
-                    return jsonify({"error": "El usuario ya tiene un spot ocupado"}), 400
+    if new_status == 'ocupado':
+        if spot['status'] != 'ocupado':
+            spot['status'] = 'ocupado'
+            spot['start_time'] = now
+            spot['end_time'] = None
+            spot['user'] = user_obj or {}
+    elif new_status == 'vacío':
+        if spot['status'] != 'vacío':
+            spot['status'] = 'vacío'
+            spot['end_time'] = now
+            spot['user'] = None
 
-    for spot in spots:
-        if spot['id'] == spot_id:
-            if new_status == 'ocupado' and spot['status'] != 'ocupado':
-                spot['status'] = 'ocupado'
-                spot['start_time'] = now
-                spot['end_time'] = None
-                spot['user'] = user_obj or {}
-
-                history.append({
-                    "id": spot_id,
-                    "user": spot['user'],
-                    "start_time": now,
-                    "end_time": None
-                })
-
-            elif new_status == 'vacío' and spot['status'] != 'vacío':
-                spot['status'] = 'vacío'
-                spot['end_time'] = now
-
-                for record in reversed(history):
-                    if record['id'] == spot_id and record['end_time'] is None:
-                        record['end_time'] = now
-                        break
-
-                spot['user'] = None
-
-            save_json(SPOTS_FILE, spots)
-            save_json(HISTORY_FILE, history)
-            spot = add_rotated([spot])[0]
-            return jsonify(spot)
-
-    return jsonify({"error": "Spot no encontrado"}), 404
+    spots_collection.replace_one({"id": spot_id}, spot, upsert=True)
+    spot = add_rotated([spot])[0]
+    return jsonify(spot)
 
 @app.route('/api/estadisticas', methods=['GET'])
 def obtener_estadisticas():
-    if not os.path.exists(HISTORY_FILE):
-        return jsonify({
+    estadisticas = estadisticas_collection.find_one({}, {"_id": 0})
+    if not estadisticas:
+        estadisticas = {
             "por_dia": {}, "por_hora": {}, "por_mes": {}, "por_año": {},
             "por_tipo_vehiculo": {}, "por_estacionamiento": {},
             "por_tipo_dia": {}, "por_franja_horaria": {},
             "total_registros": 0, "usuarios_unicos": 0
-        })
-
-    with open(HISTORY_FILE, 'r') as f:
-        registros = json.load(f)
-
-    por_dia = defaultdict(int)
-    por_hora = defaultdict(int)
-    por_mes = defaultdict(int)
-    por_año = defaultdict(int)
-    por_tipo_vehiculo = defaultdict(int)
-    por_estacionamiento = defaultdict(int)
-    por_tipo_dia = defaultdict(int)
-    por_franja_horaria = defaultdict(int)
-    usuarios_unicos = set()
-
-    for r in registros:
-        start_time = r.get("start_time")
-        user = r.get("user")
-
-        if not start_time or not user:
-            continue
-
-        try:
-            fecha = datetime.fromisoformat(start_time)
-        except Exception:
-            continue
-
-        dia = fecha.strftime("%Y-%m-%d")
-        hora = fecha.strftime("%H")
-        mes = fecha.strftime("%Y-%m")
-        año = fecha.strftime("%Y")
-
-        tipo_vehiculo = user.get("tipo_vehiculo", "Desconocido")
-        spot_id = str(r.get("parking_id", "N/A"))
-        dni = user.get("dni")
-
-        por_dia[dia] += 1
-        por_hora[hora] += 1
-        por_mes[mes] += 1
-        por_año[año] += 1
-        por_tipo_vehiculo[tipo_vehiculo] += 1
-        por_estacionamiento[spot_id] += 1
-
-        if dni:
-            usuarios_unicos.add(dni)
-
-        tipo_dia = "fin_de_semana" if fecha.weekday() >= 5 else "laboral"
-        por_tipo_dia[tipo_dia] += 1
-
-        h = int(hora)
-        if h < 6:
-            franja = "madrugada"
-        elif h < 12:
-            franja = "mañana"
-        elif h < 18:
-            franja = "tarde"
-        else:
-            franja = "noche"
-        por_franja_horaria[franja] += 1
-
-    return jsonify({
-        "por_dia": por_dia,
-        "por_hora": por_hora,
-        "por_mes": por_mes,
-        "por_año": por_año,
-        "por_tipo_vehiculo": por_tipo_vehiculo,
-        "por_estacionamiento": por_estacionamiento,
-        "por_tipo_dia": por_tipo_dia,
-        "por_franja_horaria": por_franja_horaria,
-        "total_registros": len(registros),
-        "usuarios_unicos": len(usuarios_unicos)
-    })
-
+        }
+    return jsonify(estadisticas)
 
 if __name__ == '__main__':
     app.run(debug=True)
