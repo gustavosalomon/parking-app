@@ -123,5 +123,17 @@ def obtener_estadisticas():
         }
     return jsonify(estadisticas)
 
+import traceback
+
+@app.route('/test-mongo', methods=['GET'])
+def test_mongo():
+    try:
+        client.server_info()  # fuerza conexión al servidor MongoDB
+        return jsonify({"status": "OK", "message": "Conexión exitosa a MongoDB Atlas"})
+    except Exception as e:
+        print("ERROR en test-mongo:", traceback.format_exc())
+        return jsonify({"status": "ERROR", "message": "Fallo de conexión a MongoDB", "detalles": str(e)}), 500
+
+
 if __name__ == '__main__':
     app.run(debug=True)
