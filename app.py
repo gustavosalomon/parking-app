@@ -8,7 +8,8 @@ app = Flask(__name__)
 CORS(app)
 
 # Conexion a MongoDB Atlas
-MONGO_URI = "mongodb+srv://admin:admin123@cluster0.2owahcw.mongodb.net/?retryWrites=true&w=majority"
+import os
+MONGO_URI = os.environ.get('MONGO_URI')
 
 client = MongoClient(MONGO_URI)
 db = client['smart_parking']
