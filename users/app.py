@@ -3,21 +3,20 @@ from flask_cors import CORS
 from pymongo import MongoClient
 import os
 
-app = Flask(__name__)  # DEFINIMOS app PRIMERO
+app = Flask(__name__)
 CORS(app)
 
-# Conexión a MongoDB Atlas usando variable de entorno
+# Conexión a MongoDB Atlas desde variable de entorno
 MONGO_URI = os.environ.get("MONGO_URI")
 client = MongoClient(MONGO_URI)
 db = client["smart_parking"]
 users_collection = db["users"]
 
-@app.route("/hello")
-def hello():
-    return "Hola mundo!"
-
 @app.route("/api/users/register", methods=["GET", "POST"])
 def register():
+    if request.method == "GET":
+        return jsonify({"message": "Usá POST para registrar un usuario."})
+
     data = request.get_json()
     required_fields = ["nombre", "apellido", "dni", "tipo_vehiculo", "celular", "password"]
 
@@ -32,6 +31,9 @@ def register():
 
 @app.route("/api/users/login", methods=["GET", "POST"])
 def login():
+    if request.method == "GET":
+        return jsonify({"message": "Usá POST para iniciar sesión."})
+
     data = request.get_json()
     dni = data.get("dni")
     password = data.get("password")
@@ -54,6 +56,10 @@ def test_connection():
         return jsonify({"status": "OK", "message": "Conexión exitosa a MongoDB Atlas"})
     except Exception as e:
         return jsonify({"status": "ERROR", "message": str(e)}), 500
+
+@app.route("/hello")
+def hello():
+    return "Hola Mundo desde el microservicio USERS 🚗"
 
 if __name__ == "__main__":
     app.run(debug=True)
