@@ -16,7 +16,7 @@ users_collection = db["users"]
 def hello():
     return "Hola mundo!"
 
-@app.route("/api/users/register", methods=["POST"])
+@app.route("/api/users/register", methods=["GET", "POST"])
 def register():
     data = request.get_json()
     required_fields = ["nombre", "apellido", "dni", "tipo_vehiculo", "celular", "password"]
@@ -30,7 +30,7 @@ def register():
     users_collection.insert_one(data)
     return jsonify({"message": "Registro exitoso"}), 201
 
-@app.route("/api/users/login", methods=["POST"])
+@app.route("/api/users/login", methods=["GET", "POST"])
 def login():
     data = request.get_json()
     dni = data.get("dni")
