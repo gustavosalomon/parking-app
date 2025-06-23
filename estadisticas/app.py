@@ -7,35 +7,29 @@ import os
 app = Flask(__name__)
 CORS(app)
 
-# Conexión a MongoDB Atlas (reemplazá si no es correcto)
 MONGO_URI = os.getenv("MONGO_URI", "TU_MONGO_URI_AQUI")
 client = pymongo.MongoClient(MONGO_URI)
 db = client["smart_parking"]
 estadisticas_col = db["estadisticas"]
 
 @app.route('/api/estadisticas/update', methods=['POST'])
-def registrar_estadistica():
+def update_estadisticas():
     data = request.get_json()
     estacionamiento_id = data.get("estacionamiento_id")
     tipo_vehiculo = data.get("tipo_vehiculo")
     dni = data.get("dni")
 
     if not estacionamiento_id or not tipo_vehiculo:
-        return jsonify({"error": "Faltan datos requeridos"}), 400
+        return jsonify({"error": "Faltan datos"}), 400
 
-    estadistica = {
+    estadisticas_col.insert_one({
         "estacionamiento_id": estacionamiento_id,
         "tipo_vehiculo": tipo_vehiculo,
         "dni": dni,
         "timestamp": datetime.now()
-    }
+    })
+    return jsonify({"message": "Registrado OK"}), 200
 
-    estadisticas_col.insert_one(estadistica)
-    return jsonify({"message": "Estadística registrada correctamente"}), 200
-
-@app.route('/test-mongo', methods=['GET'])
+@app.route('/test', methods=['GET'])
 def test():
     return jsonify({"ok": True})
-
-if __name__ == '__main__':
-    app.run()
