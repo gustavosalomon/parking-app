@@ -1,7 +1,0 @@
-Flask
-Flask-Cors
-pandas
-XlsxWriter
-gunicorn
-pymongo[srv]
-dnspython
