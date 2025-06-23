@@ -7,13 +7,15 @@ import os
 app = Flask(__name__)
 CORS(app)
 
+# Configuración de MongoDB Atlas
 MONGO_URI = os.getenv("MONGO_URI", "TU_MONGO_URI_AQUI")
 client = pymongo.MongoClient(MONGO_URI)
 db = client["smart_parking"]
 estadisticas_col = db["estadisticas"]
 
+# Endpoint para registrar una nueva estadística
 @app.route('/api/estadisticas/update', methods=['POST'])
-def update_estadisticas():
+def registrar_estadistica():
     data = request.get_json()
     estacionamiento_id = data.get("estacionamiento_id")
     tipo_vehiculo = data.get("tipo_vehiculo")
@@ -28,8 +30,10 @@ def update_estadisticas():
         "dni": dni,
         "timestamp": datetime.now()
     })
-    return jsonify({"message": "Registrado OK"}), 200
 
+    return jsonify({"message": "Registro exitoso"}), 200
+
+# Endpoint de test rápido
 @app.route('/test', methods=['GET'])
 def test():
     return jsonify({"ok": True})
