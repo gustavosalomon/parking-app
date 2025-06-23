@@ -1,7 +1,8 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
-from pymongo import MongoClient
+from pymongo import MongoClient, UpdateOne
 import os
+from datetime import datetime
 
 app = Flask(__name__)
 CORS(app)
@@ -14,25 +15,75 @@ client = MongoClient(MONGO_URI)
 db = client["smart_parking"]
 estadisticas_collection = db["estadisticas"]
 
-def inicializar_estadisticas():
-    # Documento inicial con todos los campos vacíos o cero
-    doc = {
-        "por_dia": {},
-        "por_hora": {},
-        "por_mes": {},
-        "por_año": {},
-        "por_tipo_vehiculo": {},
-        "por_estacionamiento": {},
-        "por_tipo_dia": {},
-        "por_franja_horaria": {},
-        "total_registros": 0,
-        "usuarios_unicos": 0
-    }
-    estadisticas_collection.insert_one(doc)
+def actualizar_contador(diccionario, clave, incremento=1):
+    diccionario[clave] = diccionario.get(clave, 0) + incremento
 
-def sumar_diccionarios(destino, origen):
-    for k, v in origen.items():
-        destino[k] = destino.get(k, 0) + v
+@app.route("/api/estadisticas/update", methods=["POST"])
+def actualizar_estadisticas():
+    data = request.json
+    # Ejemplo data esperado: 
+    # {
+    #   "tipo_vehiculo": "auto",
+    #   "estacionamiento_id": "3",
+    #   "hora": "14",
+    #   "dia": "2025-06-21",
+    #   "mes": "2025-06",
+    #   "año": "2025",
+    #   "tipo_dia": "laboral",
+    #   "franja_horaria": "tarde",
+    #   "usuario_id": "dni_o_id_usuario"
+    # }
+
+    filtro = {"_id": "estadisticas_unicas"}
+
+    actualizacion = {
+        "$inc": {
+            f"por_tipo_vehiculo.{data.get('tipo_vehiculo')}": 1,
+            f"por_estacionamiento.{data.get('estacionamiento_id')}": 1,
+            f"por_hora.{data.get('hora')}": 1,
+            f"por_dia.{data.get('dia')}": 1,
+            f"por_mes.{data.get('mes')}": 1,
+            f"por_año.{data.get('año')}": 1,
+            f"por_tipo_dia.{data.get('tipo_dia')}": 1,
+            f"por_franja_horaria.{data.get('franja_horaria')}": 1,
+            "total_registros": 1
+        }
+    }
+
+    # Actualizar usuarios únicos con addToSet
+    if "usuario_id" in data and data["usuario_id"]:
+        actualizacion["$addToSet"] = {"usuarios_unicos_set": data["usuario_id"]}
+
+    # Upsert documento acumulado
+    result = estadisticas_collection.update_one(filtro, {
+        **actualizacion,
+        "$setOnInsert": {
+            "por_tipo_vehiculo": {},
+            "por_estacionamiento": {},
+            "por_hora": {},
+            "por_dia": {},
+            "por_mes": {},
+            "por_año": {},
+            "por_tipo_dia": {},
+            "por_franja_horaria": {},
+            "total_registros": 0,
+            "usuarios_unicos_set": []
+        }
+    }, upsert=True)
+
+    return jsonify({"status": "OK", "message": "Estadísticas actualizadas"}), 200
+
+@app.route("/api/estadisticas", methods=["GET"])
+def obtener_estadisticas():
+    doc = estadisticas_collection.find_one({"_id": "estadisticas_unicas"})
+    if not doc:
+        return jsonify({"message": "No hay estadísticas disponibles", "status": "OK"})
+
+    # Copiar documento y calcular usuarios_unicos contando el set
+    doc = {k: v for k, v in doc.items() if k != "_id" and k != "usuarios_unicos_set"}
+    doc["usuarios_unicos"] = len(estadisticas_collection.find_one({"_id": "estadisticas_unicas"}).get("usuarios_unicos_set", []))
+
+    return jsonify(doc)
 
 @app.route("/test-mongo")
 def test_mongo():
@@ -41,40 +92,6 @@ def test_mongo():
         return jsonify({"status": "OK", "message": "Conexión exitosa a MongoDB Atlas"})
     except Exception as e:
         return jsonify({"status": "ERROR", "message": "Fallo de conexión a MongoDB", "detalles": str(e)}), 500
-
-@app.route("/api/estadisticas", methods=["GET", "POST"])
-def estadisticas():
-    # Obtener documento único
-    doc = estadisticas_collection.find_one()
-    if not doc:
-        inicializar_estadisticas()
-        doc = estadisticas_collection.find_one()
-
-    if request.method == "GET":
-        # Convertir _id a str y devolver documento
-        doc["_id"] = str(doc["_id"])
-        return jsonify(doc)
-
-    if request.method == "POST":
-        data = request.json
-        if not data:
-            return jsonify({"status": "ERROR", "message": "No se enviaron datos"}), 400
-
-        # Actualizar sumando valores
-        for campo in ["por_dia", "por_hora", "por_mes", "por_año", "por_tipo_vehiculo",
-                      "por_estacionamiento", "por_tipo_dia", "por_franja_horaria"]:
-            if campo in data:
-                sumar_diccionarios(doc.get(campo, {}), data[campo])
-
-        # Sumar total_registros y usuarios_unicos
-        doc["total_registros"] = doc.get("total_registros", 0) + data.get("total_registros", 0)
-        doc["usuarios_unicos"] = doc.get("usuarios_unicos", 0) + data.get("usuarios_unicos", 0)
-
-        # Guardar documento actualizado en MongoDB (usando reemplazo)
-        estadisticas_collection.replace_one({"_id": doc["_id"]}, doc)
-
-        doc["_id"] = str(doc["_id"])
-        return jsonify({"status": "OK", "message": "Estadísticas actualizadas", "datos": doc})
 
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0")
