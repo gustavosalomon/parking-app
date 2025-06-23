@@ -7,27 +7,14 @@ import os
 app = Flask(__name__)
 CORS(app)
 
-# Configuración de MongoDB Atlas
-MONGO_URI = os.getenv("MONGO_URI", "TU_URI_DE_MONGODB_ATLAS_AQUÍ")
+MONGO_URI = os.getenv("MONGO_URI", "TU_MONGO_URI_AQUI")
 client = pymongo.MongoClient(MONGO_URI)
 db = client["smart_parking"]
 estadisticas_col = db["estadisticas"]
 
-# Ruta de prueba
-@app.route('/test-mongo')
-def test_mongo():
-    try:
-        test_doc = {"mensaje": "Conexión exitosa", "fecha": datetime.now()}
-        estadisticas_col.insert_one(test_doc)
-        return jsonify({"success": True, "message": "MongoDB OK"})
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)})
-
-# Ruta para actualizar estadísticas
 @app.route('/api/estadisticas/update', methods=['POST'])
 def actualizar_estadisticas():
     data = request.json
-
     estacionamiento_id = data.get("estacionamiento_id")
     tipo_vehiculo = data.get("tipo_vehiculo")
     dni = data.get("dni")
@@ -46,6 +33,9 @@ def actualizar_estadisticas():
 
     return jsonify({"message": "Estadística registrada correctamente"}), 200
 
-# Levantar app
+@app.route('/test-mongo')
+def test_mongo():
+    return jsonify({"success": True})
+
 if __name__ == '__main__':
     app.run(debug=True)
