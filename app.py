@@ -67,6 +67,7 @@ def actualizar_estadisticas():
 
     return jsonify({"message": "Estadística actualizada"}), 200
 
+# 🟢 Agregamos esto para asegurar que Render respete el puerto
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
