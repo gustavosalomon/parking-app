@@ -1,97 +1,71 @@
-from flask import Flask, jsonify, request
+from flask import Flask, request, jsonify
 from flask_cors import CORS
-from pymongo import MongoClient, UpdateOne
-import os
+from pymongo import MongoClient
 from datetime import datetime
+import os
 
 app = Flask(__name__)
 CORS(app)
 
-MONGO_URI = os.environ.get("MONGO_URI")
-if not MONGO_URI:
-    raise Exception("ERROR: La variable de entorno MONGO_URI no está configurada")
-
+MONGO_URI = os.getenv("MONGO_URI")  # Asegurate que esté definido en Render
 client = MongoClient(MONGO_URI)
 db = client["smart_parking"]
-estadisticas_collection = db["estadisticas"]
+estadisticas = db["estadisticas"]
 
-def actualizar_contador(diccionario, clave, incremento=1):
-    diccionario[clave] = diccionario.get(clave, 0) + incremento
+def clasificar_franja_horaria(hora):
+    hora = int(hora)
+    if 6 <= hora < 12: return "mañana"
+    elif 12 <= hora < 18: return "tarde"
+    elif 18 <= hora < 24: return "noche"
+    else: return "madrugada"
+
+def es_laboral(fecha):
+    dia = fecha.weekday()
+    return "laboral" if dia < 5 else "fin de semana"
 
 @app.route("/api/estadisticas/update", methods=["POST"])
 def actualizar_estadisticas():
-    data = request.json
-    # Ejemplo data esperado: 
-    # {
-    #   "tipo_vehiculo": "auto",
-    #   "estacionamiento_id": "3",
-    #   "hora": "14",
-    #   "dia": "2025-06-21",
-    #   "mes": "2025-06",
-    #   "año": "2025",
-    #   "tipo_dia": "laboral",
-    #   "franja_horaria": "tarde",
-    #   "usuario_id": "dni_o_id_usuario"
-    # }
+    data = request.get_json()
+    if not data: return jsonify({"error": "Datos vacíos"}), 400
 
-    filtro = {"_id": "estadisticas_unicas"}
+    fecha = datetime.utcnow()
+    hoy_str = fecha.strftime("%Y-%m-%d")
+    mes_str = fecha.strftime("%Y-%m")
+    año_str = fecha.strftime("%Y")
+    hora_str = str(fecha.hour)
 
-    actualizacion = {
+    tipo_vehiculo = data.get("tipo_vehiculo", "desconocido")
+    spot_id = str(data.get("id"))
+    dni = str(data.get("dni", "N/A"))
+
+    franja = clasificar_franja_horaria(hora_str)
+    tipo_dia = es_laboral(fecha)
+
+    estadisticas.update_one({}, {
         "$inc": {
-            f"por_tipo_vehiculo.{data.get('tipo_vehiculo')}": 1,
-            f"por_estacionamiento.{data.get('estacionamiento_id')}": 1,
-            f"por_hora.{data.get('hora')}": 1,
-            f"por_dia.{data.get('dia')}": 1,
-            f"por_mes.{data.get('mes')}": 1,
-            f"por_año.{data.get('año')}": 1,
-            f"por_tipo_dia.{data.get('tipo_dia')}": 1,
-            f"por_franja_horaria.{data.get('franja_horaria')}": 1,
+            f"por_dia.{hoy_str}": 1,
+            f"por_hora.{hora_str}": 1,
+            f"por_mes.{mes_str}": 1,
+            f"por_año.{año_str}": 1,
+            f"por_tipo_vehiculo.{tipo_vehiculo}": 1,
+            f"por_estacionamiento.{spot_id}": 1,
+            f"por_tipo_dia.{tipo_dia}": 1,
+            f"por_franja_horaria.{franja}": 1,
             "total_registros": 1
-        }
-    }
-
-    # Actualizar usuarios únicos con addToSet
-    if "usuario_id" in data and data["usuario_id"]:
-        actualizacion["$addToSet"] = {"usuarios_unicos_set": data["usuario_id"]}
-
-    # Upsert documento acumulado
-    result = estadisticas_collection.update_one(filtro, {
-        **actualizacion,
-        "$setOnInsert": {
-            "por_tipo_vehiculo": {},
-            "por_estacionamiento": {},
-            "por_hora": {},
-            "por_dia": {},
-            "por_mes": {},
-            "por_año": {},
-            "por_tipo_dia": {},
-            "por_franja_horaria": {},
-            "total_registros": 0,
-            "usuarios_unicos_set": []
-        }
+        },
+        "$addToSet": { "dni_registrados": dni }
     }, upsert=True)
 
-    return jsonify({"status": "OK", "message": "Estadísticas actualizadas"}), 200
+    # Actualizar el contador de usuarios únicos
+    doc = estadisticas.find_one()
+    usuarios = doc.get("dni_registrados", [])
+    estadisticas.update_one({}, { "$set": { "usuarios_unicos": len(usuarios) } })
+
+    return jsonify({"mensaje": "Estadísticas actualizadas correctamente"}), 200
 
 @app.route("/api/estadisticas", methods=["GET"])
 def obtener_estadisticas():
-    doc = estadisticas_collection.find_one({"_id": "estadisticas_unicas"})
+    doc = estadisticas.find_one({}, {'_id': False})
     if not doc:
-        return jsonify({"message": "No hay estadísticas disponibles", "status": "OK"})
-
-    # Copiar documento y calcular usuarios_unicos contando el set
-    doc = {k: v for k, v in doc.items() if k != "_id" and k != "usuarios_unicos_set"}
-    doc["usuarios_unicos"] = len(estadisticas_collection.find_one({"_id": "estadisticas_unicas"}).get("usuarios_unicos_set", []))
-
+        return jsonify({})
     return jsonify(doc)
-
-@app.route("/test-mongo")
-def test_mongo():
-    try:
-        client.server_info()
-        return jsonify({"status": "OK", "message": "Conexión exitosa a MongoDB Atlas"})
-    except Exception as e:
-        return jsonify({"status": "ERROR", "message": "Fallo de conexión a MongoDB", "detalles": str(e)}), 500
-
-if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0")
